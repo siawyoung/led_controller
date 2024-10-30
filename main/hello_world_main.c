@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h> // For atoi
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/ledc.h"
@@ -14,32 +15,48 @@
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT
 #define LEDC_FREQUENCY          500
 #define LEDC_CHANNEL_0          LEDC_CHANNEL_0
+#define LEDC_CHANNEL_1          LEDC_CHANNEL_1
+#define LEDC_CHANNEL_2          LEDC_CHANNEL_2
 #define LEDC_OUTPUT_IO_0        7
+#define LEDC_OUTPUT_IO_1        8
+#define LEDC_OUTPUT_IO_2        9
 
 static const char *TAG = "PWM_WebServer";
 
-// HTML content for the web page
+// HTML content for the web page with three text inputs
 const char* html_page = 
     "<!DOCTYPE html>"
     "<html>"
     "<head><title>PWM Controller</title></head>"
     "<body>"
-    "<h1>Adjust PWM Duty Cycle</h1>"
-    "<input type='range' min='0' max='8191' value='819' id='dutySlider' oninput='updateDuty(this.value)'/>"
-    "<p>Duty Cycle: <span id='dutyValue'>10%</span></p>"
+    "<h1>Adjust PWM Duty Cycles</h1>"
+    "<div>"
+    "  <label for='duty0'>GPIO 7 Duty Cycle (0-8191): </label>"
+    "  <input type='number' id='duty0' name='duty0' min='0' max='8191' value='819' oninput='updateDuty(0, this.value)'/>"
+    "</div>"
+    "<div>"
+    "  <label for='duty1'>GPIO 8 Duty Cycle (0-8191): </label>"
+    "  <input type='number' id='duty1' name='duty1' min='0' max='8191' value='819' oninput='updateDuty(1, this.value)'/>"
+    "</div>"
+    "<div>"
+    "  <label for='duty2'>GPIO 9 Duty Cycle (0-8191): </label>"
+    "  <input type='number' id='duty2' name='duty2' min='0' max='8191' value='819' oninput='updateDuty(2, this.value)'/>"
+    "</div>"
+    "<p>Duty Cycles Updated</p>"
     "<script>"
-    "function updateDuty(val) {"
+    "function updateDuty(channel, val) {"
+    "  if(val === '') return;"
     "  var xhr = new XMLHttpRequest();"
-    "  xhr.open('GET', '/set?duty=' + val, true);"
+    "  xhr.open('GET', '/set?channel=' + channel + '&duty=' + val, true);"
     "  xhr.send();"
-    "  document.getElementById('dutyValue').innerText = (val / 8191 * 100).toFixed(2) + '%';"
     "}"
     "</script>"
     "</body>"
     "</html>";
 
-// Function to initialize LEDC for PWM
+// Function to initialize LEDC for PWM on multiple channels
 void init_pwm() {
+    // Configure LEDC timer
     ledc_timer_config_t ledc_timer = {
         .speed_mode       = LEDC_MODE,
         .timer_num        = LEDC_TIMER,
@@ -49,7 +66,8 @@ void init_pwm() {
     };
     ledc_timer_config(&ledc_timer);
 
-    ledc_channel_config_t ledc_channel = {
+    // Configure LEDC channels
+    ledc_channel_config_t ledc_channel_0 = {
         .speed_mode     = LEDC_MODE,
         .channel        = LEDC_CHANNEL_0,
         .timer_sel      = LEDC_TIMER,
@@ -58,31 +76,90 @@ void init_pwm() {
         .duty           = 819, // Initial duty cycle (10%)
         .hpoint         = 0
     };
-    ledc_channel_config(&ledc_channel);
+    ledc_channel_config(&ledc_channel_0);
+
+    ledc_channel_config_t ledc_channel_1 = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL_1,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = LEDC_OUTPUT_IO_1,
+        .duty           = 819, // Initial duty cycle (10%)
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ledc_channel_1);
+
+    ledc_channel_config_t ledc_channel_2 = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL_2,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = LEDC_OUTPUT_IO_2,
+        .duty           = 819, // Initial duty cycle (10%)
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ledc_channel_2);
 }
 
 // Handler to serve the HTML page
 esp_err_t root_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, html_page, strlen(html_page));
     return ESP_OK;
 }
 
-// Handler to set the duty cycle
+// Handler to set the duty cycle for a specific channel
 esp_err_t set_duty_handler(httpd_req_t *req) {
-    char duty_str[10];
-    int ret = httpd_req_get_url_query_str(req, duty_str, sizeof(duty_str));
-    if (ret == ESP_OK) {
-        char duty_val[10];
-        if (httpd_query_key_value(duty_str, "duty", duty_val, sizeof(duty_val)) == ESP_OK) {
-            int duty = atoi(duty_val);
-            if (duty >= 0 && duty <= 8191) { // 13-bit resolution
-                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, duty);
-                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0);
-                ESP_LOGI(TAG, "Duty cycle set to %d (%.2f%%)", duty, (duty / 8191.0) * 100);
-            }
-        }
+    char query_str[100];
+    if (httpd_req_get_url_query_str(req, query_str, sizeof(query_str)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No query string found");
+        return ESP_FAIL;
     }
-    httpd_resp_send(req, "OK", 2);
+
+    char channel_str[10];
+    char duty_val_str[10];
+    if (httpd_query_key_value(query_str, "channel", channel_str, sizeof(channel_str)) != ESP_OK ||
+        httpd_query_key_value(query_str, "duty", duty_val_str, sizeof(duty_val_str)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing channel or duty parameter");
+        return ESP_FAIL;
+    }
+
+    int channel = atoi(channel_str);
+    int duty = atoi(duty_val_str);
+
+    if (channel < 0 || channel > 2) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid channel");
+        return ESP_FAIL;
+    }
+
+    if (duty < 0 || duty > 8191) { // 13-bit resolution
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Duty must be between 0 and 8191");
+        return ESP_FAIL;
+    }
+
+    // Set duty cycle based on channel
+    switch(channel) {
+        case 0:
+            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, duty);
+            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0);
+            ESP_LOGI(TAG, "GPIO 7 Duty cycle set to %d (%.2f%%)", duty, (duty / 8191.0) * 100);
+            break;
+        case 1:
+            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, duty);
+            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1);
+            ESP_LOGI(TAG, "GPIO 8 Duty cycle set to %d (%.2f%%)", duty, (duty / 8191.0) * 100);
+            break;
+        case 2:
+            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, duty);
+            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2);
+            ESP_LOGI(TAG, "GPIO 9 Duty cycle set to %d (%.2f%%)", duty, (duty / 8191.0) * 100);
+            break;
+        default:
+            // This should never happen due to earlier checks
+            break;
+    }
+
+    httpd_resp_send(req, "OK", strlen("OK"));
     return ESP_OK;
 }
 
