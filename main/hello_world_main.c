@@ -20,7 +20,7 @@
 #define LEDC_OUTPUT_IO          (7) // GPIO 7
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT // 13-bit resolution
-#define LEDC_FREQUENCY          (500) // 500 Hz
+#define LEDC_FREQUENCY          (500) // 500Hz
 
 void app_main(void)
 {
@@ -59,7 +59,7 @@ void app_main(void)
         .freq_hz          = LEDC_FREQUENCY,
         .clk_cfg          = LEDC_AUTO_CLK
     };
-    // Set configuration of timer0 for high speed channels
+    // Set configuration of timer0 for low speed channels
     if (ledc_timer_config(&ledc_timer) != ESP_OK) {
         printf("LEDC Timer configuration failed!\n");
         return;
@@ -82,7 +82,7 @@ void app_main(void)
     }
 
     // Set duty cycle to 50%
-    uint32_t duty = (1 << LEDC_DUTY_RES) / 2;
+    uint32_t duty = (1 << LEDC_DUTY_RES) / 10;
     if (ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty) != ESP_OK) {
         printf("LEDC Set duty failed!\n");
         return;
@@ -91,7 +91,7 @@ void app_main(void)
         printf("LEDC Update duty failed!\n");
         return;
     }
-    printf("PWM signal is being output on GPIO %d with %d Hz frequency and 50%% duty cycle.\n",
+    printf("PWM signal is being output on GPIO %d with %d Hz frequency and 10%% duty cycle.\n",
            LEDC_OUTPUT_IO, LEDC_FREQUENCY);
 
     // Optionally, you can adjust the duty cycle in a loop
@@ -110,6 +110,8 @@ void app_main(void)
     }
     */
 
+    // Removed countdown and restart behavior
+    /*
     for (int i = 10; i >= 0; i--) {
         printf("Restarting in %d seconds...\n", i);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -117,4 +119,10 @@ void app_main(void)
     printf("Restarting now.\n");
     fflush(stdout);
     esp_restart();
+    */
+
+    // Keep the task alive indefinitely
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Delay for 1 second
+    }
 }
